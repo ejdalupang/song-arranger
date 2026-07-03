@@ -199,7 +199,52 @@ function load(){
   }catch(e){}
   return {songs: [], templates: []};
 }
-function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+let cloudPushTimer = null;
+function save(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (cloudUser && window.FB){
+    clearTimeout(cloudPushTimer);
+    cloudPushTimer = setTimeout(() => window.FB.pushState(state), 600);
+  }
+}
+
+let cloudUser = null;
+window.addEventListener('fb-auth-changed', async (e) => {
+  cloudUser = e.detail.user;
+  if (view === 'settings') render();
+  if (!cloudUser) return;
+  try{
+    const remoteJson = await window.FB.fetchOnce();
+    if (remoteJson){
+      const sameData = remoteJson === JSON.stringify(state);
+      const localIsEmpty = state.songs.length === 0 && (state.templates||[]).length === 0;
+      if (!sameData){
+        if (localIsEmpty){
+          state = JSON.parse(remoteJson);
+          save();
+          render();
+        } else {
+          openModal({
+            title: 'Cloud data found',
+            message: "This account already has synced songs. Use the cloud version, or keep what's on this device?",
+            confirmLabel: 'Use Cloud Data',
+            cancelLabel: 'Keep This Device',
+            onConfirm: () => { state = JSON.parse(remoteJson); save(); render(); window.FB.pushState(state); },
+            onCancel: () => { window.FB.pushState(state); }
+          });
+        }
+      }
+    } else {
+      window.FB.pushState(state);
+    }
+  }catch(err){ /* offline or blocked — app still works locally */ }
+  window.FB.startSync((remoteJson) => {
+    state = JSON.parse(remoteJson);
+    save();
+    render();
+    flashSaved('Synced');
+  });
+});
 
 const THEME_KEY = 'songArranger.theme';
 let theme = localStorage.getItem(THEME_KEY) || 'system';
@@ -244,6 +289,7 @@ const ICONS = {
   sliders:'<path d="M4 6h11M19 6h1" stroke-width="2" stroke-linecap="round"/><circle cx="17" cy="6" r="2" stroke-width="2"/><path d="M4 12h3M11 12h9" stroke-width="2" stroke-linecap="round"/><circle cx="7" cy="12" r="2" stroke-width="2"/><path d="M4 18h7M15 18h5" stroke-width="2" stroke-linecap="round"/><circle cx="11" cy="18" r="2" stroke-width="2"/>',
   check:'<path d="M4 12l5 5L20 6" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>',
   search:'<circle cx="11" cy="11" r="7" stroke-width="2"/><path d="M21 21l-4.3-4.3" stroke-width="2" stroke-linecap="round"/>',
+  mail:'<rect x="3" y="5" width="18" height="14" rx="2" stroke-width="2"/><path d="M3 7l9 6 9-6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 function svg(name, extra=''){
   const stroke = name==='handle' ? 'currentColor' : 'none';
@@ -287,7 +333,7 @@ function flashSaved(msg){
   saveFlashTimer = setTimeout(() => el.classList.remove('show'), 1500);
 }
 
-function openModal({title, message, inputValue, inputPlaceholder, confirmLabel='OK', cancelLabel='Cancel', danger=false, hideCancel=false, onConfirm}){
+function openModal({title, message, inputValue, inputPlaceholder, confirmLabel='OK', cancelLabel='Cancel', danger=false, hideCancel=false, onConfirm, onCancel}){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -305,7 +351,7 @@ function openModal({title, message, inputValue, inputPlaceholder, confirmLabel='
   if (input) setTimeout(() => { input.focus(); input.select(); }, 50);
   function close(){ overlay.remove(); }
   const cancelBtn = overlay.querySelector('.modal-cancel');
-  if (cancelBtn) cancelBtn.onclick = close;
+  if (cancelBtn) cancelBtn.onclick = () => { close(); if (onCancel) onCancel(); };
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   const confirmBtn = overlay.querySelector('.modal-confirm');
   confirmBtn.onclick = () => {
@@ -544,6 +590,7 @@ function normalizeTemplateBlocks(tmpl){
 
 /* ---------- DATA / BACKUP ---------- */
 function renderSettings(){
+  const fbReady = !!window.FB;
   return `
   <div class="header"><h1>Settings</h1></div>
   <div class="content">
@@ -554,6 +601,18 @@ function renderSettings(){
       <button data-theme-choice="dark" class="${theme==='dark'?'active':''}">Dark</button>
     </div>
     <div class="help-text">"System" follows your phone's setting. Light or Dark stays fixed no matter what your phone is set to.</div>
+
+    <div class="section-title">Sync Across Devices</div>
+    ${!fbReady ? `<div class="help-text" style="margin-top:0;">Loading sync…</div>` : cloudUser ? `
+      <div class="help-text" style="margin-top:0;">Signed in as <strong>${escapeHtml(cloudUser.email)}</strong>. Songs sync automatically to any device signed into this email.</div>
+      <button class="ghost-btn" id="btn-signout" style="width:100%; margin-top:10px;">Sign Out</button>
+    ` : `
+      <div class="help-text" style="margin-top:0;">Sign in with your email to sync songs across your iPad and iPhone.</div>
+      <div class="field" style="margin-top:10px; margin-bottom:0;">
+        <input type="email" id="sync-email" placeholder="you@example.com">
+      </div>
+      <button class="primary-btn" id="btn-send-link" style="width:100%; margin-top:10px;">${svg('mail')} Send Sign-in Link</button>
+    `}
   </div>`;
 }
 
@@ -796,6 +855,44 @@ function attachHandlers(){
     document.querySelectorAll('#theme-switch [data-theme-choice]').forEach(btn => {
       btn.onclick = () => setTheme(btn.dataset.themeChoice);
     });
+    const sendBtn = document.getElementById('btn-send-link');
+    if (sendBtn){
+      sendBtn.onclick = async () => {
+        const emailInput = document.getElementById('sync-email');
+        const email = emailInput.value.trim();
+        if (!email || !email.includes('@')){
+          openModal({ title: 'Enter a valid email', confirmLabel: 'OK', hideCancel: true, onConfirm: () => {} });
+          return;
+        }
+        sendBtn.disabled = true;
+        sendBtn.textContent = 'Sending…';
+        try{
+          await window.FB.sendLoginLink(email);
+          openModal({
+            title: 'Check your email',
+            message: `We sent a sign-in link to ${email}. Open it on this device to finish signing in — you'll need to do this once per device.`,
+            confirmLabel: 'Got it',
+            hideCancel: true,
+            onConfirm: () => {}
+          });
+        }catch(err){
+          openModal({ title: 'Could not send link', message: err.message, confirmLabel: 'OK', hideCancel: true, onConfirm: () => {} });
+        }
+        render();
+      };
+    }
+    const signOutBtn = document.getElementById('btn-signout');
+    if (signOutBtn){
+      signOutBtn.onclick = () => {
+        openModal({
+          title: 'Sign out?',
+          message: 'This device will stop syncing until you sign in again. Your data stays in the cloud.',
+          confirmLabel: 'Sign Out',
+          danger: true,
+          onConfirm: async () => { await window.FB.signOut(); render(); }
+        });
+      };
+    }
   }
 
   if (view === 'data'){
@@ -921,6 +1018,101 @@ function importData(e){
 }
 
 render();
+</script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+  import { getAuth, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCkqz8n9A1HfaKbblbq63sJTg1uYOo5twU",
+    authDomain: "song-arranger-d6d6f.firebaseapp.com",
+    projectId: "song-arranger-d6d6f",
+    storageBucket: "song-arranger-d6d6f.firebasestorage.app",
+    messagingSenderId: "38504758306",
+    appId: "1:38504758306:web:ad7f042ca0531720051e7b",
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const auth = getAuth(fbApp);
+  const db = getFirestore(fbApp);
+
+  let unsubscribeSnapshot = null;
+  let lastLocalWriteAt = 0;
+
+  async function completeSignInIfNeeded(){
+    if (!isSignInWithEmailLink(auth, window.location.href)) return false;
+    const storedEmail = localStorage.getItem('songArranger.pendingEmail');
+    if (storedEmail){
+      await signInWithEmailLink(auth, storedEmail, window.location.href);
+      localStorage.removeItem('songArranger.pendingEmail');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return true;
+    }
+    return new Promise((resolve) => {
+      window.openModal({
+        title: 'Confirm your email',
+        message: 'Enter the email you used to request this sign-in link.',
+        inputValue: '',
+        inputPlaceholder: 'you@example.com',
+        confirmLabel: 'Sign In',
+        onConfirm: async (typedEmail) => {
+          try{
+            await signInWithEmailLink(auth, typedEmail, window.location.href);
+            window.history.replaceState({}, document.title, window.location.pathname);
+            resolve(true);
+          }catch(err){
+            window.openModal({ title: 'Sign-in failed', message: err.message, confirmLabel: 'OK', hideCancel: true, onConfirm: () => resolve(false) });
+          }
+        },
+        onCancel: () => resolve(false)
+      });
+    });
+  }
+
+  window.FB = {
+    user: null,
+    sendLoginLink: async (email) => {
+      await sendSignInLinkToEmail(auth, email, { url: window.location.href, handleCodeInApp: true });
+      localStorage.setItem('songArranger.pendingEmail', email);
+    },
+    signOut: async () => {
+      if (unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
+      await signOut(auth);
+    },
+    pushState: async (stateObj) => {
+      if (!auth.currentUser) return;
+      lastLocalWriteAt = Date.now();
+      await setDoc(doc(db, 'users', auth.currentUser.uid), {
+        data: JSON.stringify(stateObj),
+        updatedAt: lastLocalWriteAt
+      });
+    },
+    fetchOnce: async () => {
+      if (!auth.currentUser) return null;
+      const snap = await getDoc(doc(db, 'users', auth.currentUser.uid));
+      return snap.exists() ? snap.data().data : null;
+    },
+    startSync: (onRemoteUpdate) => {
+      if (!auth.currentUser) return;
+      if (unsubscribeSnapshot) unsubscribeSnapshot();
+      unsubscribeSnapshot = onSnapshot(doc(db, 'users', auth.currentUser.uid), (snap) => {
+        if (!snap.exists()) return;
+        const remote = snap.data();
+        if (remote.updatedAt && remote.updatedAt > lastLocalWriteAt + 500){
+          onRemoteUpdate(remote.data);
+        }
+      });
+    }
+  };
+
+  onAuthStateChanged(auth, (user) => {
+    window.FB.user = user;
+    window.dispatchEvent(new CustomEvent('fb-auth-changed', { detail: { user } }));
+  });
+
+  completeSignInIfNeeded();
 </script>
 </body>
 </html>
