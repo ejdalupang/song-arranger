@@ -74,6 +74,9 @@ button{font-family:inherit;}
 .palette{display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin:10px 0 4px;}
 .palette button{color:var(--tc); background:var(--tbg); border:none; border-radius:12px; padding:12px 8px; font-size:13px; font-weight:700;}
 .palette button.add-type-btn{background:transparent; border:2px dashed var(--border); color:var(--sub);}
+.insert-divider{display:flex; align-items:center; justify-content:center; height:14px; margin:-3px 0; position:relative; z-index:2;}
+.insert-divider button{width:22px; height:22px; border-radius:50%; border:none; background:var(--border); color:var(--sub); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; line-height:1; opacity:.7;}
+.insert-divider button.active{background:var(--accent); color:#fff; opacity:1;}
 .section-title{font-size:13px; font-weight:700; color:var(--sub); text-transform:uppercase; letter-spacing:.04em; margin:18px 4px 8px;}
 .field{margin-bottom:12px;}
 .field label{display:block; font-size:12px; color:var(--sub); font-weight:600; margin-bottom:5px;}
@@ -279,6 +282,7 @@ let view = 'home';
 let currentSongId = null;
 let sheetEditMode = false;
 let paletteOpenFor = null; // null | 'type' | 'template'
+let insertPaletteAt = null; // index to insert a new part at, or null
 let homeSearchQuery = '';
 
 /* ---------- icons ---------- */
@@ -297,6 +301,7 @@ const ICONS = {
   check:'<path d="M4 12l5 5L20 6" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>',
   search:'<circle cx="11" cy="11" r="7" stroke-width="2"/><path d="M21 21l-4.3-4.3" stroke-width="2" stroke-linecap="round"/>',
   mail:'<rect x="3" y="5" width="18" height="14" rx="2" stroke-width="2"/><path d="M3 7l9 6 9-6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  link:'<path d="M9 15l6-6" stroke-width="2" stroke-linecap="round"/><path d="M11 6.5l.7-.7a4 4 0 015.5 5.5l-1 1M13 17.5l-.7.7a4 4 0 01-5.5-5.5l1-1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 function svg(name, extra=''){
   const stroke = name==='handle' ? 'currentColor' : 'none';
@@ -485,11 +490,16 @@ function renderSheet(){
         <input type="number" inputmode="numeric" id="song-bpm" value="${escapeHtml(song.bpm||'')}" placeholder="e.g. 120">
       </div>
     </div>
+    <div class="field">
+      <label>Reference Link</label>
+      <input type="url" id="song-link" value="${escapeHtml(song.link||'')}" placeholder="YouTube, Spotify, or any link to this version">
+    </div>
     ` : `
     <div style="text-align:center; margin-bottom:14px;">
       <h2 style="margin:0; font-size:22px;">${escapeHtml(song.title || 'Untitled')}</h2>
       ${song.artist ? `<p style="margin:4px 0 0; color:var(--sub); font-size:14px;">${escapeHtml(song.artist)}</p>` : ''}
       ${(song.key || song.bpm) ? `<p style="margin:4px 0 0; color:var(--sub); font-size:13px;">${[song.key ? `Key ${escapeHtml(song.key)}` : '', song.bpm ? `${escapeHtml(song.bpm)} BPM` : ''].filter(Boolean).join(' · ')}</p>` : ''}
+      ${song.link ? `<p style="margin:8px 0 0;"><a href="${escapeHtml(normalizeUrl(song.link))}" target="_blank" rel="noopener" style="color:var(--accent); font-size:13px; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:5px;">${svg('link', 'style="width:14px;height:14px"')} Open Reference</a></p>` : ''}
     </div>
     `}
     <div class="zoom-bar">
@@ -500,7 +510,11 @@ function renderSheet(){
     <div id="sheet-blocks" style="font-size:${(16*sheetZoom).toFixed(1)}px;">
     ${song.blocks.length === 0
       ? `<div class="empty">This song has no parts yet.<br>${editing ? `Tap "Add Part" below to start.` : `Tap ${svg('edit', 'style="width:14px;height:14px;vertical-align:-2px"')} above to start editing.`}</div>`
-      : song.blocks.map((b,i) => editing ? editBlockHtml(b,i) : viewBlockHtml(b,i)).join('')}
+      : !editing
+        ? song.blocks.map((b,i) => viewBlockHtml(b,i)).join('')
+        : song.blocks.map((b,i) => `${insertDividerHtml(i, insertPaletteAt===i)}${insertPaletteAt===i ? `<div id="inline-palette">${palettePicker()}</div>` : ''}${editBlockHtml(b,i)}`).join('')
+          + insertDividerHtml(song.blocks.length, insertPaletteAt===song.blocks.length)
+          + (insertPaletteAt===song.blocks.length ? `<div id="inline-palette">${palettePicker()}</div>` : '')}
     </div>
     ${editing ? `
     <div class="fab-row" style="margin-top:10px; margin-bottom:0;">
@@ -549,6 +563,7 @@ function songSheetText(song){
   if (song.artist) lines.push(song.artist);
   const meta = [song.key ? `Key ${song.key}` : '', song.bpm ? `${song.bpm} BPM` : ''].filter(Boolean).join(' · ');
   if (meta) lines.push(meta);
+  if (song.link) lines.push(normalizeUrl(song.link));
   lines.push('');
   song.blocks.forEach((b, i) => {
     let line = `${i+1}. ${b.label}`;
@@ -581,8 +596,28 @@ function palettePicker(){
   <div class="section-title">Choose a part type</div>
   <div class="palette">
     ${BLOCK_TYPES.map(t => `<button class="${t.cls}" data-add-type="${t.key}">${escapeHtml(t.label)}</button>`).join('')}
-    <button class="add-type-btn" id="btn-add-part-type">+ Add Part Type</button>
+    <button class="add-type-btn" data-add-part-type-btn>+ Add Part Type</button>
   </div>`;
+}
+function insertDividerHtml(index, active){
+  return `<div class="insert-divider"><button data-insert-at="${index}" class="${active ? 'active' : ''}">${active ? '&times;' : '+'}</button></div>`;
+}
+function wirePaletteHandlers(container, insertIndex){
+  container.querySelectorAll('[data-add-type]').forEach(btn => {
+    btn.onclick = () => addBlock(btn.dataset.addType, undefined, insertIndex);
+  });
+  const addTypeBtn = container.querySelector('[data-add-part-type-btn]');
+  if (addTypeBtn){
+    addTypeBtn.onclick = () => {
+      openModal({
+        title: 'Add Part Type',
+        inputValue: '',
+        inputPlaceholder: 'e.g. Ad-lib, Solo, Vamp',
+        confirmLabel: 'Add',
+        onConfirm: (name) => addBlock('custom', name, insertIndex)
+      });
+    };
+  }
 }
 
 /* ---------- TEMPLATES ---------- */
@@ -604,6 +639,10 @@ function renderTemplates(){
       </div>
     `).join('')}
   </div>`;
+}
+function normalizeUrl(url){
+  if (!url) return '';
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 }
 function normalizeTemplateBlocks(tmpl){
   return tmpl.blocks.map(b => Array.isArray(b) ? {type:b[0], label:b[1], repeats:b[2]} : b);
@@ -661,7 +700,7 @@ function renderData(){
 
 /* ---------- mutations ---------- */
 function newSong(){
-  const s = {id: uid(), title: 'New Song', artist: '', key: '', bpm: '', blocks: [], updatedAt: Date.now()};
+  const s = {id: uid(), title: 'New Song', artist: '', key: '', bpm: '', link: '', blocks: [], updatedAt: Date.now()};
   state.songs.push(s);
   save();
   currentSongId = s.id;
@@ -681,7 +720,7 @@ function useTemplate(tmplId){
     confirmLabel: 'Create',
     onConfirm: (title) => {
       const blocks = normalizeTemplateBlocks(tmpl).map(b => ({id: uid(), type: b.type, label: b.label, repeats: b.repeats || 1, notes: '', open: false}));
-      const s = {id: uid(), title, artist: '', key: '', bpm: '', blocks, updatedAt: Date.now()};
+      const s = {id: uid(), title, artist: '', key: '', bpm: '', link: '', blocks, updatedAt: Date.now()};
       state.songs.push(s);
       save();
       currentSongId = s.id;
@@ -713,13 +752,18 @@ function saveCurrentAsTemplate(){
 
 function touchSong(){ const s = currentSong(); if (s) s.updatedAt = Date.now(); save(); flashSaved(); }
 
-function addBlock(typeKey, customLabel){
+function addBlock(typeKey, customLabel, insertIndex){
   const song = currentSong();
   const b = makeBlock(typeKey, song.blocks);
   if (customLabel) b.label = customLabel;
-  song.blocks.push(b);
+  if (insertIndex === undefined || insertIndex === null || insertIndex >= song.blocks.length){
+    song.blocks.push(b);
+  } else {
+    song.blocks.splice(insertIndex, 0, b);
+  }
   touchSong();
   paletteOpenFor = null;
+  insertPaletteAt = null;
   render();
   const cardEl = document.querySelector(`.sheet-block[data-id="${b.id}"] .sb-label-input`);
   if (cardEl){ cardEl.focus(); cardEl.select(); }
@@ -778,8 +822,8 @@ function attachHandlers(){
   }
 
   if (view === 'sheet'){
-    document.getElementById('btn-sheet-back').onclick = () => { view = 'home'; render(); };
-    document.getElementById('btn-toggle-edit').onclick = () => { sheetEditMode = !sheetEditMode; paletteOpenFor = null; render(); };
+    document.getElementById('btn-sheet-back').onclick = () => { view = 'home'; insertPaletteAt = null; render(); };
+    document.getElementById('btn-toggle-edit').onclick = () => { sheetEditMode = !sheetEditMode; paletteOpenFor = null; insertPaletteAt = null; render(); };
     document.getElementById('btn-sheet-share').onclick = shareSheet;
     document.getElementById('zoom-out').onclick = () => setZoom(sheetZoom - 0.1);
     document.getElementById('zoom-in').onclick = () => setZoom(sheetZoom + 0.1);
@@ -791,27 +835,19 @@ function attachHandlers(){
       document.getElementById('song-artist').oninput = (e) => { currentSong().artist = e.target.value; touchSong(); };
       document.getElementById('song-key').oninput = (e) => { currentSong().key = e.target.value; touchSong(); };
       document.getElementById('song-bpm').oninput = (e) => { currentSong().bpm = e.target.value; touchSong(); };
+      document.getElementById('song-link').oninput = (e) => { currentSong().link = e.target.value; touchSong(); };
 
       const paletteWrap = document.getElementById('palette-wrap');
       document.getElementById('btn-add-part').onclick = () => {
+        insertPaletteAt = null;
         if (paletteOpenFor === 'type'){ paletteWrap.innerHTML = ''; paletteOpenFor = null; return; }
         paletteOpenFor = 'type';
         paletteWrap.innerHTML = palettePicker();
-        paletteWrap.querySelectorAll('[data-add-type]').forEach(btn => {
-          btn.onclick = () => addBlock(btn.dataset.addType);
-        });
-        document.getElementById('btn-add-part-type').onclick = () => {
-          openModal({
-            title: 'Add Part Type',
-            inputValue: '',
-            inputPlaceholder: 'e.g. Ad-lib, Solo, Vamp',
-            confirmLabel: 'Add',
-            onConfirm: (name) => addBlock('custom', name)
-          });
-        };
+        wirePaletteHandlers(paletteWrap, undefined);
         paletteWrap.scrollIntoView({behavior:'smooth', block:'start'});
       };
       document.getElementById('btn-use-template').onclick = () => {
+        insertPaletteAt = null;
         if (paletteOpenFor === 'template'){ paletteWrap.innerHTML = ''; paletteOpenFor = null; return; }
         paletteOpenFor = 'template';
         paletteWrap.innerHTML = templatePalette();
@@ -820,6 +856,19 @@ function attachHandlers(){
         });
         paletteWrap.scrollIntoView({behavior:'smooth', block:'start'});
       };
+      document.querySelectorAll('[data-insert-at]').forEach(btn => {
+        btn.onclick = () => {
+          const idx = parseInt(btn.dataset.insertAt, 10);
+          paletteOpenFor = null;
+          paletteWrap.innerHTML = '';
+          insertPaletteAt = (insertPaletteAt === idx) ? null : idx;
+          render();
+        };
+      });
+      const inlinePalette = document.getElementById('inline-palette');
+      if (inlinePalette && insertPaletteAt !== null){
+        wirePaletteHandlers(inlinePalette, insertPaletteAt);
+      }
 
       document.querySelectorAll('.sb-label-input').forEach(inp => {
         inp.oninput = (e) => {
