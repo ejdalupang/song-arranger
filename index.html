@@ -475,10 +475,21 @@ function renderSheet(){
       <label>Artist</label>
       <input type="text" id="song-artist" value="${escapeHtml(song.artist)}" placeholder="Artist (optional)">
     </div>
+    <div style="display:flex; gap:10px;">
+      <div class="field" style="flex:1;">
+        <label>Key</label>
+        <input type="text" id="song-key" value="${escapeHtml(song.key||'')}" placeholder="e.g. G, Bb, F#m">
+      </div>
+      <div class="field" style="flex:1;">
+        <label>BPM</label>
+        <input type="number" inputmode="numeric" id="song-bpm" value="${escapeHtml(song.bpm||'')}" placeholder="e.g. 120">
+      </div>
+    </div>
     ` : `
     <div style="text-align:center; margin-bottom:14px;">
       <h2 style="margin:0; font-size:22px;">${escapeHtml(song.title || 'Untitled')}</h2>
       ${song.artist ? `<p style="margin:4px 0 0; color:var(--sub); font-size:14px;">${escapeHtml(song.artist)}</p>` : ''}
+      ${(song.key || song.bpm) ? `<p style="margin:4px 0 0; color:var(--sub); font-size:13px;">${[song.key ? `Key ${escapeHtml(song.key)}` : '', song.bpm ? `${escapeHtml(song.bpm)} BPM` : ''].filter(Boolean).join(' · ')}</p>` : ''}
     </div>
     `}
     <div class="zoom-bar">
@@ -536,6 +547,8 @@ function viewBlockHtml(b, i){
 function songSheetText(song){
   const lines = [song.title || 'Untitled'];
   if (song.artist) lines.push(song.artist);
+  const meta = [song.key ? `Key ${song.key}` : '', song.bpm ? `${song.bpm} BPM` : ''].filter(Boolean).join(' · ');
+  if (meta) lines.push(meta);
   lines.push('');
   song.blocks.forEach((b, i) => {
     let line = `${i+1}. ${b.label}`;
@@ -648,7 +661,7 @@ function renderData(){
 
 /* ---------- mutations ---------- */
 function newSong(){
-  const s = {id: uid(), title: 'New Song', artist: '', blocks: [], updatedAt: Date.now()};
+  const s = {id: uid(), title: 'New Song', artist: '', key: '', bpm: '', blocks: [], updatedAt: Date.now()};
   state.songs.push(s);
   save();
   currentSongId = s.id;
@@ -668,7 +681,7 @@ function useTemplate(tmplId){
     confirmLabel: 'Create',
     onConfirm: (title) => {
       const blocks = normalizeTemplateBlocks(tmpl).map(b => ({id: uid(), type: b.type, label: b.label, repeats: b.repeats || 1, notes: '', open: false}));
-      const s = {id: uid(), title, artist: '', blocks, updatedAt: Date.now()};
+      const s = {id: uid(), title, artist: '', key: '', bpm: '', blocks, updatedAt: Date.now()};
       state.songs.push(s);
       save();
       currentSongId = s.id;
@@ -776,6 +789,8 @@ function attachHandlers(){
       document.getElementById('btn-save-tmpl').onclick = saveCurrentAsTemplate;
       document.getElementById('song-title').oninput = (e) => { currentSong().title = e.target.value; touchSong(); };
       document.getElementById('song-artist').oninput = (e) => { currentSong().artist = e.target.value; touchSong(); };
+      document.getElementById('song-key').oninput = (e) => { currentSong().key = e.target.value; touchSong(); };
+      document.getElementById('song-bpm').oninput = (e) => { currentSong().bpm = e.target.value; touchSong(); };
 
       const paletteWrap = document.getElementById('palette-wrap');
       document.getElementById('btn-add-part').onclick = () => {
