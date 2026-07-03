@@ -73,6 +73,7 @@ button{font-family:inherit;}
 .stepper span{font-size:0.8125em; font-weight:700; min-width:1.25em; text-align:center;}
 .palette{display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin:10px 0 4px;}
 .palette button{color:var(--tc); background:var(--tbg); border:none; border-radius:12px; padding:12px 8px; font-size:13px; font-weight:700;}
+.palette button.add-type-btn{background:transparent; border:2px dashed var(--border); color:var(--sub);}
 .section-title{font-size:13px; font-weight:700; color:var(--sub); text-transform:uppercase; letter-spacing:.04em; margin:18px 4px 8px;}
 .field{margin-bottom:12px;}
 .field label{display:block; font-size:12px; color:var(--sub); font-weight:600; margin-bottom:5px;}
@@ -567,6 +568,7 @@ function palettePicker(){
   <div class="section-title">Choose a part type</div>
   <div class="palette">
     ${BLOCK_TYPES.map(t => `<button class="${t.cls}" data-add-type="${t.key}">${escapeHtml(t.label)}</button>`).join('')}
+    <button class="add-type-btn" id="btn-add-part-type">+ Add Part Type</button>
   </div>`;
 }
 
@@ -698,9 +700,10 @@ function saveCurrentAsTemplate(){
 
 function touchSong(){ const s = currentSong(); if (s) s.updatedAt = Date.now(); save(); flashSaved(); }
 
-function addBlock(typeKey){
+function addBlock(typeKey, customLabel){
   const song = currentSong();
   const b = makeBlock(typeKey, song.blocks);
+  if (customLabel) b.label = customLabel;
   song.blocks.push(b);
   touchSong();
   paletteOpenFor = null;
@@ -782,6 +785,16 @@ function attachHandlers(){
         paletteWrap.querySelectorAll('[data-add-type]').forEach(btn => {
           btn.onclick = () => addBlock(btn.dataset.addType);
         });
+        document.getElementById('btn-add-part-type').onclick = () => {
+          openModal({
+            title: 'Add Part Type',
+            inputValue: '',
+            inputPlaceholder: 'e.g. Ad-lib, Solo, Vamp',
+            confirmLabel: 'Add',
+            onConfirm: (name) => addBlock('custom', name)
+          });
+        };
+        paletteWrap.scrollIntoView({behavior:'smooth', block:'start'});
       };
       document.getElementById('btn-use-template').onclick = () => {
         if (paletteOpenFor === 'template'){ paletteWrap.innerHTML = ''; paletteOpenFor = null; return; }
@@ -790,6 +803,7 @@ function attachHandlers(){
         paletteWrap.querySelectorAll('[data-use-inline-tmpl]').forEach(row => {
           row.onclick = () => appendTemplateBlocks(row.dataset.useInlineTmpl);
         });
+        paletteWrap.scrollIntoView({behavior:'smooth', block:'start'});
       };
 
       document.querySelectorAll('.sb-label-input').forEach(inp => {
