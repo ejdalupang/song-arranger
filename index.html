@@ -128,7 +128,10 @@ button{font-family:inherit;}
 .sb-notes-input{display:block; width:100%; border:none; background:transparent; font-size:0.95em; line-height:1.45; color:var(--note-text); font-family:inherit; resize:none; padding:0.2em 0 0; margin-top:0.05em; overflow:hidden; overflow-wrap:anywhere;}
 .sb-notes-input:focus{outline:none;}
 .sb-notes-input::placeholder{color:var(--sub); opacity:.2;}
-.sheet-block-view{background:var(--card); border-radius:0.875em; box-shadow:var(--shadow); border-left:5px solid var(--tc); padding:0.7em 0.9em; margin-bottom:0.5em;}
+.sheet-block-view{background:var(--card); border-radius:0.875em; box-shadow:var(--shadow); border-left:5px solid var(--tc); padding:0.7em 0.9em; margin-bottom:0.5em; cursor:pointer; transition:box-shadow .15s, background .15s;}
+.sheet-block-view.t-chorus{border-left-width:9px; background:var(--tbg);}
+.sheet-block-view.is-current{box-shadow:0 0 0 3px var(--tc), var(--shadow); background:var(--tbg);}
+.sbv-now-badge{flex:none; background:var(--tc); color:#fff; font-size:0.65em; font-weight:800; padding:3px 7px; border-radius:6px; letter-spacing:.04em; margin-top:.28em;}
 .sbv-top{display:flex; align-items:flex-start; gap:0.6em;}
 .sbv-index{flex:none; font-size:0.7em; font-weight:700; color:var(--tc); opacity:.7; margin-top:.35em;}
 .sbv-label{flex:0 1 auto; min-width:0; font-size:1.3em; font-weight:800; color:var(--text); letter-spacing:-.01em; overflow-wrap:anywhere;}
@@ -283,6 +286,7 @@ let currentSongId = null;
 let sheetEditMode = false;
 let paletteOpenFor = null; // null | 'type' | 'template'
 let insertPaletteAt = null; // index to insert a new part at, or null
+let currentPartId = null; // "we are here" marker while rehearsing (not persisted)
 let homeSearchQuery = '';
 
 /* ---------- icons ---------- */
@@ -548,9 +552,10 @@ function editBlockHtml(b, i){
 function viewBlockHtml(b, i){
   const t = typeInfo(b.type);
   return `
-  <div class="sheet-block-view ${t.cls}">
+  <div class="sheet-block-view ${t.cls}${b.id === currentPartId ? ' is-current' : ''}" data-id="${b.id}">
     <div class="sbv-top">
       <span class="sbv-index">${i+1}</span>
+      ${b.id === currentPartId ? `<span class="sbv-now-badge">NOW</span>` : ''}
       <span class="sbv-label">${escapeHtml(b.label)}</span>
       <span class="sbv-notes">${escapeHtml(b.notes)}</span>
       <span class="sbv-reps">${b.repeats}x</span>
@@ -799,6 +804,7 @@ function attachHandlers(){
         if (e.target.closest('.btn-del-song')) return;
         currentSongId = card.dataset.song;
         sheetEditMode = false;
+        currentPartId = null;
         view = 'sheet';
         render();
       });
@@ -822,12 +828,21 @@ function attachHandlers(){
   }
 
   if (view === 'sheet'){
-    document.getElementById('btn-sheet-back').onclick = () => { view = 'home'; insertPaletteAt = null; render(); };
+    document.getElementById('btn-sheet-back').onclick = () => { view = 'home'; insertPaletteAt = null; currentPartId = null; render(); };
     document.getElementById('btn-toggle-edit').onclick = () => { sheetEditMode = !sheetEditMode; paletteOpenFor = null; insertPaletteAt = null; render(); };
     document.getElementById('btn-sheet-share').onclick = shareSheet;
     document.getElementById('zoom-out').onclick = () => setZoom(sheetZoom - 0.1);
     document.getElementById('zoom-in').onclick = () => setZoom(sheetZoom + 0.1);
     document.getElementById('zoom-reset').onclick = () => setZoom(1);
+
+    if (!sheetEditMode){
+      document.querySelectorAll('.sheet-block-view').forEach(el => {
+        el.onclick = () => {
+          currentPartId = (currentPartId === el.dataset.id) ? null : el.dataset.id;
+          render();
+        };
+      });
+    }
 
     if (sheetEditMode){
       document.getElementById('btn-save-tmpl').onclick = saveCurrentAsTemplate;
