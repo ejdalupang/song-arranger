@@ -200,12 +200,19 @@ function load(){
   return {songs: [], templates: []};
 }
 let cloudPushTimer = null;
+let applyingRemoteUpdate = false;
 function save(){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  if (cloudUser && window.FB){
+  if (cloudUser && window.FB && !applyingRemoteUpdate){
     clearTimeout(cloudPushTimer);
     cloudPushTimer = setTimeout(() => window.FB.pushState(state), 600);
   }
+}
+function applyRemoteState(json){
+  applyingRemoteUpdate = true;
+  state = JSON.parse(json);
+  save();
+  applyingRemoteUpdate = false;
 }
 
 let cloudUser = null;
@@ -220,8 +227,7 @@ window.addEventListener('fb-auth-changed', async (e) => {
       const localIsEmpty = state.songs.length === 0 && (state.templates||[]).length === 0;
       if (!sameData){
         if (localIsEmpty){
-          state = JSON.parse(remoteJson);
-          save();
+          applyRemoteState(remoteJson);
           render();
         } else {
           openModal({
@@ -229,7 +235,7 @@ window.addEventListener('fb-auth-changed', async (e) => {
             message: "This account already has synced songs. Use the cloud version, or keep what's on this device?",
             confirmLabel: 'Use Cloud Data',
             cancelLabel: 'Keep This Device',
-            onConfirm: () => { state = JSON.parse(remoteJson); save(); render(); window.FB.pushState(state); },
+            onConfirm: () => { applyRemoteState(remoteJson); render(); },
             onCancel: () => { window.FB.pushState(state); }
           });
         }
@@ -239,8 +245,8 @@ window.addEventListener('fb-auth-changed', async (e) => {
     }
   }catch(err){ /* offline or blocked — app still works locally */ }
   window.FB.startSync((remoteJson) => {
-    state = JSON.parse(remoteJson);
-    save();
+    if (remoteJson === JSON.stringify(state)) return;
+    applyRemoteState(remoteJson);
     render();
     flashSaved('Synced');
   });
